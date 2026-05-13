@@ -1,0 +1,12 @@
+{
+    "welcome": "🇬🇧 Welcome to VPN bot!\n\nChoose an action:",
+    "welcome_ru": "🇷🇺 Welcome to VPN bot!\n\nChoose an action:",
+    "buy": "🛒 Buy VPN",
+    "mykey": "🔑 My key",
+    "set_server": "🌍 Select server",
+    "referral": "👥 Referral system",
+    "server_status": "📊 Server status",
+    "support": "❓ Support",
+    "change_lang": "⚙️ Change language",
+    "mystats": "📈 My stats"
+}

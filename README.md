@@ -1,1 +1,0 @@
-# ultrovpn-bot

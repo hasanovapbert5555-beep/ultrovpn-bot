@@ -1,6 +1,0 @@
-aiogram==3.0.0b7
-aiohttp>=3.8.0
-aiosqlite>=0.17.0
-qrcode
-Pillow
-python-dotenv

@@ -1,11 +1,31 @@
 import os
+import logging
 from dotenv import load_dotenv
 
 load_dotenv()
 
+# Основной конфиг
 BOT_TOKEN = os.getenv('BOT_TOKEN')
 CRYPTOBOT_TOKEN = os.getenv('CRYPTOBOT_TOKEN')
-ADMIN_ID = int(os.getenv('ADMIN_ID'))
+ADMIN_ID = int(os.getenv('ADMIN_ID', '0'))
+DEBUG = os.getenv('DEBUG', 'false').lower() == 'true'
+
+# Важно: Установите реальный IP вашего сервера!
+SERVER_IP = os.getenv('SERVER_IP', '127.0.0.1')
+if SERVER_IP == '127.0.0.1':
+    logging.warning("⚠️  SERVER_IP is set to 127.0.0.1! Set real IP in .env file")
+
+# Пути для Xray
+XRAY_CONFIG_PATH = os.getenv('XRAY_CONFIG_PATH', '/usr/local/etc/xray/config.json')
+XRAY_KEYS_PATH = os.getenv('XRAY_KEYS_PATH', '/usr/local/etc/xray/reality_keys.json')
+
+# Проверка обязательных переменных
+if not BOT_TOKEN:
+    raise ValueError("❌ BOT_TOKEN не установле�� в .env файле")
+if not CRYPTOBOT_TOKEN:
+    raise ValueError("❌ CRYPTOBOT_TOKEN не установлен в .env файле")
+if ADMIN_ID == 0:
+    raise ValueError("❌ ADMIN_ID не установлен в .env файле")
 
 # Тарифы в днях и рублях
 TARIFFS = {

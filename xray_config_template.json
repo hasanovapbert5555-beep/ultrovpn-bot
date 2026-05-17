@@ -1,0 +1,36 @@
+{
+  "log": {
+    "loglevel": "warning"
+  },
+  "inbounds": [
+    {
+      "port": 443,
+      "protocol": "vless",
+      "settings": {
+        "clients": [],
+        "decryption": "none"
+      },
+      "streamSettings": {
+        "network": "ws",
+        "security": "tls",
+        "tlsSettings": {
+          "certificates": [
+            {
+              "certificateFile": "/etc/letsencrypt/live/your-domain.com/fullchain.pem",
+              "keyFile": "/etc/letsencrypt/live/your-domain.com/privkey.pem"
+            }
+          ]
+        },
+        "wsSettings": {
+          "path": "/vless"
+        }
+      }
+    }
+  ],
+  "outbounds": [
+    {
+      "protocol": "freedom",
+      "tag": "direct"
+    }
+  ]
+}

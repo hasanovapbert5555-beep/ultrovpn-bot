@@ -1,9 +1,12 @@
 import aiohttp
 import json
 import asyncio
+import logging
 from typing import Optional, Dict, Any
 from datetime import datetime, timedelta
 from config import CRYPTOBOT_TOKEN, CRYPTOBOT_API_URL, TARIFFS
+
+logger = logging.getLogger(__name__)
 
 class CryptoBotAPI:
     def __init__(self, token: str):
@@ -12,114 +15,145 @@ class CryptoBotAPI:
             'Crypto-Pay-API-Token': token,
             'Content-Type': 'application/json'
         }
-        self.checked_invoices = set()  # Для отслеживания уже проверенных счетов
     
     async def create_invoice(self, amount: float, currency: str = 'USDT', description: str = 'VPN Subscription') -> Optional[Dict[str, Any]]:
         """Создает счет через CryptoBot API"""
-        async with aiohttp.ClientSession() as session:
-            url = f"{CRYPTOBOT_API_URL}/createInvoice"
-            payload = {
-                'asset': currency,
-                'amount': str(amount),
-                'description': description,
-                'paid_btn_name': 'callback',
-                'paid_btn_url': 'https://t.me/your_bot'
-            }
-            
-            try:
-                async with session.post(url, headers=self.headers, json=payload) as response:
+        try:
+            async with aiohttp.ClientSession() as session:
+                url = f"{CRYPTOBOT_API_URL}/createInvoice"
+                payload = {
+                    'asset': currency,
+                    'amount': str(amount),
+                    'description': description,
+                    'paid_btn_name': 'callback',
+                    'paid_btn_url': 'https://t.me/your_bot'
+                }
+                
+                async with session.post(url, headers=self.headers, json=payload, timeout=aiohttp.ClientTimeout(total=10)) as response:
                     if response.status == 200:
                         data = await response.json()
                         if data.get('ok'):
+                            logger.info(f"✅ Invoice created: {data['result']['invoice_id']}")
                             return data['result']
+                    else:
+                        logger.error(f"❌ CryptoBot API error: {response.status}")
                     return None
-            except Exception as e:
-                print(f"Error creating invoice: {e}")
-                return None
+        except asyncio.TimeoutError:
+            logger.error("❌ CryptoBot API timeout when creating invoice")
+            return None
+        except Exception as e:
+            logger.error(f"❌ Error creating invoice: {e}")
+            return None
     
-    async def get_invoices(self, status: str = 'active') -> Optional[list]:
+    async def get_invoices(self, status: str = 'active') -> list:
         """Получает список счетов"""
-        async with aiohttp.ClientSession() as session:
-            url = f"{CRYPTOBOT_API_URL}/getInvoices"
-            payload = {'status': status}
-            
-            try:
-                async with session.post(url, headers=self.headers, json=payload) as response:
+        try:
+            async with aiohttp.ClientSession() as session:
+                url = f"{CRYPTOBOT_API_URL}/getInvoices"
+                payload = {'status': status}
+                
+                async with session.post(url, headers=self.headers, json=payload, timeout=aiohttp.ClientTimeout(total=10)) as response:
                     if response.status == 200:
                         data = await response.json()
                         if data.get('ok'):
-                            return data['result']['items']
+                            items = data['result'].get('items', [])
+                            logger.debug(f"✅ Got {len(items)} invoices with status {status}")
+                            return items
+                    else:
+                        logger.error(f"❌ CryptoBot API error: {response.status}")
                     return []
-            except Exception as e:
-                print(f"Error getting invoices: {e}")
-                return []
+        except asyncio.TimeoutError:
+            logger.error("❌ CryptoBot API timeout when getting invoices")
+            return []
+        except Exception as e:
+            logger.error(f"❌ Error getting invoices: {e}")
+            return []
 
 cryptobot = CryptoBotAPI(CRYPTOBOT_TOKEN)
 
 async def create_payment(telegram_id: int, tariff_key: str) -> Optional[Dict[str, Any]]:
     """Создает платеж и возвращает информацию для оплаты"""
-    tariff = TARIFFS.get(tariff_key)
-    if not tariff:
-        return None
-    
-    from db import add_payment
-    
-    # Создаем счет в CryptoBot
-    invoice = await cryptobot.create_invoice(
-        amount=tariff['price_usdt'],
-        currency='USDT',
-        description=f'VPN Subscription - {tariff_key}'
-    )
-    
-    if invoice:
-        # Сохраняем платеж в БД
-        await add_payment(invoice['invoice_id'], telegram_id, tariff_key, tariff['price_usdt'])
+    try:
+        tariff = TARIFFS.get(tariff_key)
+        if not tariff:
+            logger.warning(f"⚠️ Unknown tariff: {tariff_key}")
+            return None
         
-        return {
-            'invoice_id': invoice['invoice_id'],
-            'pay_url': invoice['pay_url'],
-            'amount_usdt': tariff['price_usdt']
-        }
-    
-    return None
+        from db import add_payment
+        
+        # Создаем счет в CryptoBot
+        invoice = await cryptobot.create_invoice(
+            amount=tariff['price_usdt'],
+            currency='USDT',
+            description=f'VPN Subscription - {tariff_key}'
+        )
+        
+        if invoice:
+            # Сохраняем платеж в БД
+            await add_payment(invoice['invoice_id'], telegram_id, tariff_key, tariff['price_usdt'])
+            
+            logger.info(f"✅ Payment created for user {telegram_id}: {tariff_key}")
+            
+            return {
+                'invoice_id': invoice['invoice_id'],
+                'pay_url': invoice['pay_url'],
+                'amount_usdt': tariff['price_usdt']
+            }
+        
+        logger.error(f"❌ Failed to create invoice for user {telegram_id}")
+        return None
+    except Exception as e:
+        logger.error(f"❌ Error creating payment for user {telegram_id}: {e}")
+        return None
 
 async def check_payment_status(invoice_id: str) -> Optional[str]:
     """Проверяет статус платежа"""
-    invoices = await cryptobot.get_invoices('active')
-    for invoice in invoices:
-        if invoice['invoice_id'] == invoice_id:
-            return invoice['status']
-    return None
+    try:
+        invoices = await cryptobot.get_invoices('active')
+        for invoice in invoices:
+            if invoice.get('invoice_id') == invoice_id:
+                return invoice.get('status')
+        return None
+    except Exception as e:
+        logger.error(f"❌ Error checking payment status for {invoice_id}: {e}")
+        return None
 
-async def process_paid_invoice(invoice_id: str) -> bool:
+async def process_paid_invoice(invoice_id: str) -> tuple:
     """Обрабатывает оплаченный счет"""
-    from db import confirm_payment, update_subscription, get_user, update_referral_stats
-    from config import TARIFFS
-    
-    # Получаем информацию о платеже
-    telegram_id, tariff_key = await confirm_payment(invoice_id)
-    
-    if telegram_id and tariff_key:
-        tariff = TARIFFS.get(tariff_key)
-        if tariff:
-            # Обновляем подписку пользователя
-            await update_subscription(telegram_id, tariff['days'])
-            
-            # Проверяем реферальную связь
-            user = await get_user(telegram_id)
-            if user and user['referred_by']:
-                # Начисляем бонус рефереру
-                await update_referral_stats(user['referred_by'], telegram_id)
-            
-            return True
-    
-    return False
+    try:
+        from db import confirm_payment, update_subscription, get_user, update_referral_stats
+        
+        # Получаем информацию о платеже
+        telegram_id, tariff_key = await confirm_payment(invoice_id)
+        
+        if telegram_id and tariff_key:
+            tariff = TARIFFS.get(tariff_key)
+            if tariff:
+                # Обновляем подписку пользователя
+                await update_subscription(telegram_id, tariff['days'])
+                
+                logger.info(f"✅ Payment processed: user {telegram_id}, tariff {tariff_key}, +{tariff['days']} days")
+                
+                # Проверяем реферальную связь
+                user = await get_user(telegram_id)
+                if user and user['referred_by']:
+                    # Начисляем бонус рефереру
+                    await update_referral_stats(user['referred_by'], telegram_id)
+                    logger.info(f"✅ Referral bonus applied: {user['referred_by']} <- {telegram_id}")
+                
+                return telegram_id, tariff_key
+        
+        logger.warning(f"⚠️ Could not process invoice {invoice_id}")
+        return None, None
+    except Exception as e:
+        logger.error(f"❌ Error processing paid invoice {invoice_id}: {e}")
+        return None, None
 
 async def payment_polling_loop(bot):
     """Фоновый процесс для проверки статуса платежей"""
-    from db import get_all_users
+    logger.info("🔄 Payment polling loop started")
     
-    print("🔄 Payment polling loop started")
+    processed_invoices = set()  # Отслеживаем уже обработанные платежи
     
     while True:
         try:
@@ -127,33 +161,34 @@ async def payment_polling_loop(bot):
             invoices = await cryptobot.get_invoices('active')
             
             for invoice in invoices:
-                invoice_id = invoice['invoice_id']
+                invoice_id = invoice.get('invoice_id')
+                
+                # Пропускаем уже обработанные
+                if invoice_id in processed_invoices:
+                    continue
                 
                 # Проверяем статус
                 if invoice.get('status') == 'paid':
                     # Обрабатываем оплату
-                    success = await process_paid_invoice(invoice_id)
+                    telegram_id, tariff_key = await process_paid_invoice(invoice_id)
                     
-                    if success:
-                        # Получаем информацию о платеже
-                        from db import confirm_payment
-                        result = await confirm_payment(invoice_id)
-                        if result:
-                            telegram_id, tariff_key = result
-                            # Уведомляем пользователя
-                            try:
-                                await bot.send_message(
-                                    telegram_id,
-                                    f"✅ <b>Платеж подтвержден!</b>\n\n"
-                                    f"🎉 Ваша подписка {tariff_key.upper()} активирована!\n"
-                                    f"🌐 Используйте кнопку «Подключить VPN» для настройки.",
-                                    parse_mode="HTML"
-                                )
-                            except:
-                                pass
+                    if telegram_id and tariff_key:
+                        processed_invoices.add(invoice_id)
+                        
+                        # Уведомляем пользователя
+                        try:
+                            await bot.send_message(
+                                telegram_id,
+                                f"✅ <b>Платеж подтвержден!</b>\n\n"
+                                f"🎉 Ваша подписка {tariff_key.upper()} активирована!\n"
+                                f"🌐 Используйте кнопку «Подключить VPN» для настройки.",
+                                parse_mode="HTML"
+                            )
+                        except Exception as e:
+                            logger.debug(f"Could not notify user {telegram_id}: {e}")
         
         except Exception as e:
-            print(f"Error in payment polling: {e}")
+            logger.error(f"❌ Error in payment polling: {e}")
         
         # Проверяем каждые 10 секунд
         await asyncio.sleep(10)
